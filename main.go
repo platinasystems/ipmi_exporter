@@ -23,6 +23,7 @@ import (
 
 	kingpin "github.com/alecthomas/kingpin/v2"
 	"github.com/prometheus/client_golang/prometheus"
+	versioncollector "github.com/prometheus/client_golang/prometheus/collectors/version"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/prometheus/common/promslog"
 	"github.com/prometheus/common/promslog/flag"
@@ -40,6 +41,10 @@ var (
 		"freeipmi.path",
 		"Path to FreeIPMI executables (default: rely on $PATH).",
 	).String()
+	nativeIPMI = kingpin.Flag(
+		"native-ipmi",
+		"Use native IPMI implementation instead of FreeIPMI (EXPERIMENTAL)",
+	).Bool()
 	webConfig = webflag.AddFlags(kingpin.CommandLine, ":9290")
 
 	sc = &SafeConfig{
@@ -100,6 +105,10 @@ func main() {
 	kingpin.Parse()
 	logger = promslog.New(promslogConfig)
 	logger.Info("Starting ipmi_exporter", "version", version.Info())
+	if *nativeIPMI {
+		logger.Info("Using Go-native IPMI implementation - this is currently EXPERIMENTAL")
+		logger.Info("Make sure to read https://github.com/prometheus-community/ipmi_exporter/blob/master/docs/native.md")
+	}
 
 	// Bail early if the config is bad.
 	if err := sc.ReloadConfig(*configFile); err != nil {
@@ -128,6 +137,7 @@ func main() {
 		}
 	}()
 
+	prometheus.MustRegister(versioncollector.NewCollector("ipmi_exporter"))
 	localCollector := metaCollector{target: targetLocal, module: "default", config: sc}
 	prometheus.MustRegister(&localCollector)
 
@@ -135,7 +145,7 @@ func main() {
 	http.HandleFunc("/ipmi", remoteIPMIHandler)       // Endpoint to do IPMI scrapes.
 	http.HandleFunc("/-/reload", updateConfiguration) // Endpoint to reload configuration.
 
-	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+	http.HandleFunc("/", func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(`<html>
             <head>
             <title>IPMI Exporter</title>

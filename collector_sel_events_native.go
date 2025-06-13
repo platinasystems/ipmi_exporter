@@ -1,4 +1,4 @@
-// Copyright 2021 The Prometheus Authors
+// Copyright 2025 The Prometheus Authors
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -14,73 +14,58 @@
 package main
 
 import (
-	"time"
+	"context"
 
 	"github.com/prometheus/client_golang/prometheus"
 
 	"github.com/prometheus-community/ipmi_exporter/freeipmi"
 )
 
-const (
-	SELEventsCollectorName CollectorName = "sel-events"
-	SELDateTimeFormat      string        = "Jan-02-2006 15:04:05"
-)
-
 var (
-	selEventsCountByStateDesc = prometheus.NewDesc(
+	selEventsCountByStateNativeDesc = prometheus.NewDesc(
 		prometheus.BuildFQName(namespace, "sel_events", "count_by_state"),
 		"Current number of log entries in the SEL by state.",
 		[]string{"state"},
 		nil,
 	)
-	selEventsCountByNameDesc = prometheus.NewDesc(
+	selEventsCountByNameNativeDesc = prometheus.NewDesc(
 		prometheus.BuildFQName(namespace, "sel_events", "count_by_name"),
 		"Current number of custom log entries in the SEL by name.",
 		[]string{"name"},
 		nil,
 	)
-	selEventsLatestTimestampDesc = prometheus.NewDesc(
+	selEventsLatestTimestampNativeDesc = prometheus.NewDesc(
 		prometheus.BuildFQName(namespace, "sel_events", "latest_timestamp"),
 		"Latest timestamp of custom log entries in the SEL by name.",
 		[]string{"name"},
 		nil,
 	)
-	selEventsLog = prometheus.NewDesc(
-		prometheus.BuildFQName(namespace, "sel_events", "log"),
-		"log entries",
-		[]string{"log"},
-		nil,
-	)
 )
 
-type SELEventsCollector struct{}
+type SELEventsNativeCollector struct{}
 
-func (c SELEventsCollector) Name() CollectorName {
+func (c SELEventsNativeCollector) Name() CollectorName {
+	// The name is intentionally the same as the non-native collector
 	return SELEventsCollectorName
 }
 
-func (c SELEventsCollector) Cmd() string {
-	return "ipmi-sel"
+func (c SELEventsNativeCollector) Cmd() string {
+	return ""
 }
 
-func (c SELEventsCollector) Args() []string {
-	return []string{
-		"--quiet-cache",
-		"--comma-separated-output",
-		"--no-header-output",
-		"--sdr-cache-recreate",
-		"--output-event-state",
-		"--interpret-oem-data",
-		"--entity-sensor-names",
-	}
+func (c SELEventsNativeCollector) Args() []string {
+	return []string{}
 }
 
-func (c SELEventsCollector) Collect(result freeipmi.Result, ch chan<- prometheus.Metric, target ipmiTarget) (int, error) {
+func (c SELEventsNativeCollector) Collect(_ freeipmi.Result, ch chan<- prometheus.Metric, target ipmiTarget) (int, error) {
 	selEventConfigs := target.config.SELEvents
 
-	events, err := freeipmi.GetSELEvents(result)
+	client, err := NewNativeClient(target)
 	if err != nil {
-		logger.Error("Failed to collect SEL events", "target", targetName(target.host), "error", err)
+		return 0, err
+	}
+	res, err := client.GetSELEntries(context.TODO(), 0)
+	if err != nil {
 		return 0, err
 	}
 
@@ -94,25 +79,25 @@ func (c SELEventsCollector) Collect(result freeipmi.Result, ch chan<- prometheus
 		selEventByNameCount[metricConfig.Name] = 0
 	}
 
-	var newTimestamp float64
-	for _, data := range events {
+	for _, data := range res {
 		for _, metricConfig := range selEventConfigs {
-			match := metricConfig.Regex.FindStringSubmatch(data.Event)
+			match := metricConfig.Regex.FindStringSubmatch(data.Standard.EventString())
+			logger.Debug("event regex", "regex", metricConfig.RegexRaw, "input", data.Standard.EventString(), "match", match)
 			if match != nil {
-				newTimestamp = 0.0
-				datetime := data.Date + " " + data.Time
-				t, err := time.Parse(SELDateTimeFormat, datetime)
+				var newTimestamp = float64(data.Standard.Timestamp.Unix())
+				// datetime := data.Date + " " + data.Time
+				// t, err := time.Parse(SELDateTimeFormat, datetime)
 				// ignore errors with invalid date or time
 				// NOTE: in some cases ipmi-sel can return "PostInit" in Date and Time fields
 				// Example:
 				// $ ipmi-sel --comma-separated-output --output-event-state --interpret-oem-data --output-oem-event-strings
 				// ID,Date,Time,Name,Type,State,Event
 				// 3,PostInit,PostInit,Sensor #211,Memory,Warning,Correctable memory error ; Event Data3 = 34h
-				if err != nil {
-					logger.Debug("Failed to parse time", "target", targetName(target.host), "error", err)
-				} else {
-					newTimestamp = float64(t.Unix())
-				}
+				// if err != nil {
+				// logger.Debug("Failed to parse time", "target", targetName(target.host), "error", err)
+				// } else {
+				// newTimestamp = float64(t.Unix())
+				// }
 				// save latest timestamp by name metrics
 				if newTimestamp > selEventByNameTimestamp[metricConfig.Name] {
 					selEventByNameTimestamp[metricConfig.Name] = newTimestamp
@@ -122,16 +107,17 @@ func (c SELEventsCollector) Collect(result freeipmi.Result, ch chan<- prometheus
 			}
 		}
 		// save count by state metrics
-		_, ok := selEventByStateCount[data.State]
+		state := string(data.Standard.EventSeverity())
+		_, ok := selEventByStateCount[state]
 		if !ok {
-			selEventByStateCount[data.State] = 0
+			selEventByStateCount[state] = 0
 		}
-		selEventByStateCount[data.State]++
+		selEventByStateCount[state]++
 	}
 
 	for state, value := range selEventByStateCount {
 		ch <- prometheus.MustNewConstMetric(
-			selEventsCountByStateDesc,
+			selEventsCountByStateNativeDesc,
 			prometheus.GaugeValue,
 			value,
 			state,
@@ -140,31 +126,17 @@ func (c SELEventsCollector) Collect(result freeipmi.Result, ch chan<- prometheus
 
 	for name, value := range selEventByNameCount {
 		ch <- prometheus.MustNewConstMetric(
-			selEventsCountByNameDesc,
+			selEventsCountByNameNativeDesc,
 			prometheus.GaugeValue,
 			value,
 			name,
 		)
 		ch <- prometheus.MustNewConstMetric(
-			selEventsLatestTimestampDesc,
+			selEventsLatestTimestampNativeDesc,
 			prometheus.GaugeValue,
 			selEventByNameTimestamp[name],
 			name,
 		)
 	}
-
-	log, err := freeipmi.GetStringSELEvents(result)
-	if err != nil {
-		logger.Error("Failed to collect SEL events logs", "target", targetName(target.host), "error", err)
-		return 0, err
-	}
-
-	ch <- prometheus.MustNewConstMetric(
-		selEventsLog,
-		prometheus.GaugeValue,
-		1,
-		log,
-	)
-
 	return 1, nil
 }
