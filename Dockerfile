@@ -1,5 +1,4 @@
 ARG BUILDPLATFORM
-ARG TARGETPLATFORM
 FROM --platform=$BUILDPLATFORM golang:1.23.4-alpine AS buildstage
 
 RUN apk update && apk add make gcc git curl
