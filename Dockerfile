@@ -1,4 +1,5 @@
-FROM golang:1.23.4-alpine AS buildstage
+ARG BUILDPLATFORM
+FROM --platform=$BUILDPLATFORM golang:1.23.4-alpine AS buildstage
 
 RUN apk update && apk add make gcc git curl
 
@@ -8,7 +9,7 @@ ENV GO111MODULE=on
 #Build ipmi_exporter
 WORKDIR /$GOPATH/src/github.com/platinasystems/ipmi_exporter
 COPY . .
-RUN make precheck style unused build
+RUN make precheck style unused build DOCKER_ARCHS=$TARGETPLATFORM
 RUN mv ipmi_exporter /
 
 #Copy the ipmi_expoter binary
