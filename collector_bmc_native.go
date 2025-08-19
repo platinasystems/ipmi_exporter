@@ -48,11 +48,13 @@ func (c BMCNativeCollector) Args() []string {
 }
 
 func (c BMCNativeCollector) Collect(_ freeipmi.Result, ch chan<- prometheus.Metric, target ipmiTarget) (int, error) {
-	client, err := NewNativeClient(target)
+	ctx := context.TODO()
+	client, err := NewNativeClient(ctx, target)
 	if err != nil {
 		return 0, err
 	}
-	res, err := client.GetDeviceID(context.TODO())
+	defer CloseNativeClient(ctx, client)
+	res, err := client.GetDeviceID(ctx)
 	if err != nil {
 		return 0, err
 	}
@@ -60,9 +62,12 @@ func (c BMCNativeCollector) Collect(_ freeipmi.Result, ch chan<- prometheus.Metr
 	// The API looks slightly awkward here, but doing this instead of calling
 	// client.GetSystemInfo() greatly reduces the number of required round-trips.
 	systemInfo := ipmi.SystemInfoParams{
+		SetInProgress: &ipmi.SystemInfoParam_SetInProgress{
+			Value: ipmi.SetInProgress_SetComplete,
+		},
 		SystemFirmwareVersions: make([]*ipmi.SystemInfoParam_SystemFirmwareVersion, 0),
 	}
-	err = client.GetSystemInfoParamsFor(context.TODO(), &systemInfo)
+	err = client.GetSystemInfoParamsFor(ctx, &systemInfo)
 	// This one is not always available
 	systemFirmwareVersion := "N/A"
 	if err != nil {

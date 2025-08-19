@@ -146,11 +146,13 @@ func (c IPMINativeCollector) Collect(_ freeipmi.Result, ch chan<- prometheus.Met
 		return true
 	}
 
-	client, err := NewNativeClient(target)
+	ctx := context.TODO()
+	client, err := NewNativeClient(ctx, target)
 	if err != nil {
 		return 0, err
 	}
-	res, err := client.GetSensors(context.TODO(), filter)
+	defer CloseNativeClient(ctx, client)
+	res, err := client.GetSensors(ctx, filter)
 	if err != nil {
 		return 0, err
 	}
@@ -175,7 +177,13 @@ func (c IPMINativeCollector) Collect(_ freeipmi.Result, ch chan<- prometheus.Met
 		case "N/A":
 			state = math.NaN()
 		default:
-			logger.Error("Unknown sensor state", "target", targetHost, "state", data.Status())
+			// TODO handle threshold sensor data
+			logger.Error(
+				"Unknown sensor state",
+				"target", targetHost,
+				"state", data.Status(),
+				"sensor_id", strconv.FormatInt(int64(data.Number), 10),
+			)
 			state = math.NaN()
 		}
 
