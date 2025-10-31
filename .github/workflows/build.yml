@@ -1,0 +1,30 @@
+name: Build - IPMI exporter
+
+on:
+  push:
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+'
+    branches:
+      - master
+      - PCC-*
+      - docker-*
+
+jobs:
+
+  # Dev
+  # ===
+
+  ipmi-exporter-dev:
+    uses: platinasystems/devops-common/.github/workflows/build-multiarch.yml@main
+    with:
+      docker_image_name: ipmi-exporter
+      docker_registry_url: ${{ vars.DOCKER_REGISTRY_URL }}
+      docker_registry_organization: ${{ vars.DOCKER_REGISTRY_ORGANIZATION }}
+      platforms: linux/amd64,linux/arm64
+      #docker_build_args: |
+      #  BUILDPLATFORM=linux/amd64
+    secrets:
+      docker_registry_username: ${{ secrets.DOCKER_REGISTRY_USERNAME }}
+      docker_registry_password: ${{ secrets.DOCKER_REGISTRY_PASSWORD }}
+      git_token: ${{ secrets.GITHUB_TOKEN }}
+      slack_webhook_url: ${{ secrets.SLACK_WEBHOOK_URL }}
